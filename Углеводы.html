@@ -1500,6 +1500,78 @@ const xeText = c => S.settings.xe ? `≈ ${fmt(c / S.settings.xe)} ХЕ` : '';
 const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; };
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
 const byName = (a, b) => a.name.localeCompare(b.name, 'ru');
+
+/* ---------- Поиск с синонимами ----------
+   Продукт находится и по привычным словам, которых нет в названии: «овсянка», «картошка», «гречневая каша».
+   Слева — что ищем в названии, справа — дополнительные слова для поиска. Работает и для своих продуктов. */
+const SYNONYMS = [
+  [/(^|[\s(])(овс|овёс)/, 'овсянка овсяная каша геркулес'],
+  [/гречк|гречнев/, 'гречка гречневая каша'],
+  [/^рис /, 'рисовая каша'],
+  [/манн/, 'манка манная каша'],
+  [/пшен/, 'пшенка пшенная каша'],
+  [/перлов/, 'перловая перловка каша'],
+  [/кукурузная (крупа|каша)/, 'кукурузная каша мамалыга'],
+  [/булгур|кускус|киноа/, 'каша крупа'],
+  [/картоф|драник/, 'картошка картофель'],
+  [/макарон|лапш|равиоли/, 'макароны паста спагетти вермишель рожки лапша'],
+  [/булоч|батон|багет|бейгл|круассан/, 'булка булочка'],
+  [/хлеб ржан/, 'черный хлеб бородинский'],
+  [/^хлеб|^батон|^багет/, 'хлеб хлебушек'],
+  [/сосиск/, 'сосиски сардельки'],
+  [/колбас|салями|мортаделл|ветчин/, 'колбаса'],
+  [/колбаса варёная/, 'докторская молочная'],
+  [/пахта|кефир/, 'кефир'],
+  [/помидор|томат/, 'помидор томат'],
+  [/перец сладк/, 'перец болгарский'],
+  [/морков/, 'морковка'],
+  [/горош|горох/, 'горох горошек'],
+  [/фасол/, 'фасоль бобы'],
+  [/клубник/, 'земляника виктория'],
+  [/^печенье/, 'печенье печенька'],
+  [/галет|крекер/, 'крекер галеты'],
+  [/конфет|ирис|леденц|карамел|драже|трюфел|мармелад|зефир|халва|нуга|помадк|козинак|грильяж/, 'конфеты сладости'],
+  [/шоколад/, 'шоколадка шоколад'],
+  [/морожен|эскимо|сорбет/, 'мороженое пломбир'],
+  [/кола|газировк|лимонад|тоник|эль|сода|рутбир/, 'газировка лимонад газ вода'],
+  [/^сок |нектар|морс|напиток/, 'сок напиток'],
+  [/хлопья|сухой завтрак|колечки|подушечки|воздушн|мюсли|гранол/, 'хлопья сухой завтрак'],
+  [/сухар|крендел|чипсы|попкорн/, 'снеки сухарики'],
+  [/орех|миндал|кешью|фундук|фисташ|арахис|пекан|макадам/, 'орехи орешки'],
+  [/семечк|семена|кунжут|мак$/, 'семечки семена'],
+  [/яйц|яичн|омлет/, 'яйца яйцо'],
+  [/курин|курица/, 'курица курятина'],
+  [/треска|минтай|лосось|скумбри|тунец|сардин|сельдь|рыбн|рыба/, 'рыба'],
+  [/говяд|свинин|телятин|индейк|фарш|ростбиф|пастром/, 'мясо'],
+  [/варенье|джем|повидл/, 'варенье джем повидло'],
+  [/^сахар$/, 'рафинад песок'],
+  [/творог/, 'творог творожок'],
+  [/детск/, 'малыш ребенок пюре'],
+  [/сгущ/, 'сгущенка'],
+];
+const norm = s => String(s).toLowerCase().replace(/ё/g, 'е');
+const searchCache = new Map();
+function searchText(name) {
+  let t = searchCache.get(name);
+  if (t == null) {
+    const n = name.toLowerCase();
+    t = norm(name + ' ' + SYNONYMS.filter(([re]) => re.test(n)).map(([, w]) => w).join(' '));
+    searchCache.set(name, t);
+  }
+  return t;
+}
+// Подходит, если каждое слово запроса встречается в названии или в синонимах
+const matches = (p, q) => { const t = searchText(p.name); return norm(q).split(/\s+/).filter(Boolean).every(w => t.includes(w)); };
+// Сначала то, что начинается с запроса, потом совпадения в названии, потом найденное по синонимам:
+// выше те, у кого синоним относится к началу названия («Овсяные хлопья» выше «Батончика овсяного»)
+function searchRank(p, q) {
+  const n = norm(p.name), w = norm(q);
+  if (n.startsWith(w)) return 0;
+  if (n.includes(w)) return 1;
+  const name = p.name.toLowerCase(), words = w.split(/\s+/).filter(Boolean);
+  const head = SYNONYMS.some(([re, s]) => { const m = name.match(re); return m && m.index <= 1 && words.some(x => norm(s).includes(x)); });
+  return head ? 2 : 3;
+}
 // Блюда хранятся отдельно, но в списках и в тарелке ведут себя как продукты
 const product = id => S.products.find(p => p.id === id) || S.dishes.find(d => d.id === id);
 const readyDishes = () => S.dishes.filter(d => d.items.length);
@@ -1575,9 +1647,9 @@ function renderProducts() {
 function renderProductList() {
   const q = query.trim().toLowerCase();
   const need = mode === 'carbs' ? num(target) : NaN;
-  const list = [...S.products, ...readyDishes()].filter(p => !q || p.name.toLowerCase().includes(q));
+  const list = [...S.products, ...readyDishes()].filter(p => !q || matches(p, q));
   // При поиске сначала названия, которые начинаются с введённого слова
-  const rank = p => !q ? 0 : p.name.toLowerCase().startsWith(q) ? 0 : 1;
+  const rank = p => q ? searchRank(p, q) : 0;
   const order = (a, b) => rank(a) - rank(b) || byName(a, b);
   const favs = list.filter(p => p.fav).sort(order), rest = list.filter(p => !p.fav).sort(order);
   const row = p => {
@@ -1786,8 +1858,8 @@ let pickQuery = '';
 function renderPickList(q) {
   pickQuery = cap(q.trim());
   q = q.trim().toLowerCase();
-  const list = S.products.filter(p => !q || p.name.toLowerCase().includes(q))
-    .sort((a, b) => (b.fav - a.fav) || byName(a, b));
+  const list = S.products.filter(p => !q || matches(p, q))
+    .sort((a, b) => (q ? searchRank(a, q) - searchRank(b, q) : 0) || (b.fav - a.fav) || byName(a, b));
   $('#picklist').innerHTML = list.length ? list.map(p => `
     <div class="item"><button class="main" data-pick="${p.id}">
       <div class="name">${p.fav ? '★ ' : ''}${esc(p.name)}</div>
